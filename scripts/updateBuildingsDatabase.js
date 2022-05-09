@@ -25,7 +25,7 @@ const example = [
         entities: [
             {
                 id: "_Bahnhofstrasse53-1_BD.scwVaNciA9DrBK2a8BQg", // unique entity id (gmlid). Can be used by clients in further requests
-                // Location is the reference point where the local crs of the gltf-file
+                // Location is the reference point for the local crs of the gltf-file
                 location: {
                     lon: 7.2217331,
                     lat: 51.5410184,
@@ -48,6 +48,7 @@ const MongoDB = require("mongodb");
 const fs = require("fs");
 const txml = require("txml");
 const path = require("path");
+const { Transform } = require('stream');
 
 let config;
 
@@ -209,6 +210,13 @@ function createEntityForBuildings(parsedFileContent, tileKmlUri) {
  * @returns
  */
 async function writeToDatabaseBucket(db, buildings) {
+
+    // db.collection("buildings.files").drop(function(err, res) {
+    //     if (err) throw err;
+    // });
+    // db.collection("buildings.chunks").drop(function(err, res) {
+    //     if (err) throw err;
+    // });
     // create or get a bucket
     let bucket = new MongoDB.GridFSBucket(db, { bucketName: "buildings" });
     // For now we drop the bucket and recreate it
@@ -221,28 +229,31 @@ async function writeToDatabaseBucket(db, buildings) {
             // Read the file with fs and pipe the stream into the gridFS writer
             // fs.createReadStream is async, even though it looks like a synchronous function
             console.log("Writing building with id: ", building.id);
-            fs.createReadStream(building.pathToModel).pipe(
-                bucket
-                    .openUploadStream(building.pathToModel, {
-                        chunkSizeBytes: 1048576,
-                        // store the georeference information in the metadata
-                        metadata: {
-                            id: building.id,
-                            location: building.location,
-                            orientation: building.orientation,
-                            tile: building.tile,
-                        },
-                    })
-                    .on("error", () => {
-                        console.error(
-                            "Something went wrong while writing building with id: ",
-                            building.id
-                        );
-                        reject();
-                    })
-                    .on("finish", () => {
-                        resolve();
-                    })
+
+             const minifyJsonTransform = new Transform({
+                transform(chunk, encoding, callback) {
+                    this.push(chunk.toString('utf-8').replace(/[\n\r\s]+/g, ''));
+                    callback();
+                }
+            });
+
+            fs.createReadStream(building.pathToModel, 'utf-8')
+                .pipe(minifyJsonTransform)
+                .pipe(bucket.openUploadStream(building.pathToModel, {
+                    chunkSizeBytes: 1048576,
+                    // store the georeference information in the metadata
+                    metadata: {
+                        id: building.id
+                    },
+                })
+                .on("error", () => {
+                    console.error("Something went wrong while writing building with id: ", building.id);
+
+                    reject();
+                })
+                .on("finish", () => {
+                    resolve();
+                })
             );
         });
 
