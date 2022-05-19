@@ -1,2 +1,6 @@
 /node_modules
-/scripts/updateBuildingsDatabase.config.json
+/Scripts/*/*.config.*
+/Scripts/*/input/*
+/Scripts/*/processing/*
+/Scripts/*/output/*
+/Tools/*
