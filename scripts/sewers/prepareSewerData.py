@@ -310,5 +310,5 @@ def calculateBbox(geometry):
     result["pMax"] = [maxX, maxY, maxZ]
     return result
 
-# call main method now that all functions are known
+# Call main method now that all functions are known
 main()

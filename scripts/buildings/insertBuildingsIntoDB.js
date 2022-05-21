@@ -3,7 +3,9 @@
  * This creates a folder structure containing the tiled 3D-models with their georeference.
  *
  * This Node.js script can be used to import such a file-structure into a MongoDB instance, converting it to the format needed by the database in the process.
- * The configuration details need to be specified in a separate file called 'updateBuildingsDatabase.config.js'.
+ * The configuration details need to be specified in a separate file called 'insertBuildingsIntoDB.config.json'.
+ * Optionally, building attributes can be imported if they were exported from the 3DCityDB as CSV.
+ * The CSV file is expected to be present in the root directory of the folder structure.
  *
  * The 3D-Models are stored using GridFS. The georeference and tile information is stored in the metadata field of each building.
  * Additionally, a separate document is created in the database, which contains the tiling information.
@@ -44,90 +46,81 @@ const example = [
 ];
 
 const MongoDB = require("mongodb");
-
 const fs = require("fs");
 const txml = require("txml");
 const path = require("path");
 const { Transform } = require('stream');
+let csvToJson = require('convert-csv-to-json');
+require("jsonminify");
 
 let config;
+const scriptFolderPath = path.dirname(__filename)
+const configPath = path.resolve(scriptFolderPath, "config", "insertBuildingsIntoDB.config.json");
 
 main();
 
 function main() {
+    console.log("Reading configuration");
     readConfigDetails();
 
-    let tileInfo = {
-        tiles: []
-    };
-    let buildings = [];
-
-    let mainKmlUri = path.join(
-        config.cityDBExportRootFolderPath,
+    let mainKmlPath = path.join(
+        "./input",
         config.cityDBExportMainKmlName
     );
-    let fileContent = fs.readFileSync(mainKmlUri, "utf8");
+
+    let fileContent = fs.readFileSync(mainKmlPath, "utf8");
     let parsed = txml.simplify(txml.parse(fileContent));
 
     let folders = parsed.kml.Document.Folder;
     // A folder can be seen as a tile here
-    for (let folder of folders) {
-        let tile = {
-            id: folder.name,
-            extent: {
-                east: parseFloat(folder.NetworkLink.Region.LatLonAltBox.east),
-                west: parseFloat(folder.NetworkLink.Region.LatLonAltBox.west),
-                north: parseFloat(folder.NetworkLink.Region.LatLonAltBox.north),
-                south: parseFloat(folder.NetworkLink.Region.LatLonAltBox.south),
-            },
-            entities: [],
-        };
-        // For each tile, iterate the entities and add them, too.
-        let tileKmlUri = path.join(
-            config.cityDBExportRootFolderPath,
-            folder.NetworkLink.Link.href
-        );
-        let tileKmlFileContent = fs.readFileSync(tileKmlUri, "utf8");
-        let parsed = txml.simplify(txml.parse(tileKmlFileContent));
-        let entities = parsed.kml.Document.Placemark;
-        // Multiple entities --> Array
-        // One entity --> Object
-        if (entities.length >= 1) {
-            for (let entity of entities) {
-                tile.entities.push(createEntityFortileInfo(entity));
-                buildings.push(createEntityForBuildings(entity, tileKmlUri));
-            }
-        } else {
-            let entity = entities;
-            tile.entities.push(createEntityFortileInfo(entity));
-            buildings.push(createEntityForBuildings(entity, tileKmlUri));
-        }
+    console.log("Creating tileInfo file");
+    // Iterates folder structure
+    let tileInfo = createTileInfoFile(folders);
+    // Iterates folder structure again, abut as long as performance is not an issue it is ok.
+    let buildings = createBuildings(folders);
 
-        tileInfo.tiles.push(tile);
+    let attributesJson;
+    if(config.insertBuildingsInfo) {
+        console.log("Converting csv file to json");
+        let inputDirContent = fs.readdirSync("./input");
+        let csvFileName = inputDirContent.filter( function( elm ) {return elm.match(/.*\.(csv?)/ig);});
+        csvFileName = csvFileName[0]; // Only allow one CSV file for now
+        let csvFilePath = path.join("./input", csvFileName)
+        attributesJson = convertCsvToJson(csvFilePath);
     }
 
     //const uri = "mongodb+srv://"+ username + ":" + password + "@" + clusterUrl  + "/test?retryWrites=true&w=majority";+
-    mongoDbUri = "mongodb://localhost:27017"; // for development, has to be replaced later
-    const client = new MongoDB.MongoClient(mongoDbUri);
+    mongoDbUrl = "mongodb://" + config.server + ":" + config.port; // TODO for development, has to be replaced later
+    console.log(mongoDbUrl);
+    const client = new MongoDB.MongoClient(mongoDbUrl);
     async function run() {
         try {
             // Connect the client to the server
+            console.log("Connecting to database");
             await client.connect();
             // Establish and verify connection
             await client.db("admin").command({ ping: 1 });
-            console.log("Connected to database");
-
+            console.log("Writing buildings to database");
             await writeToDatabaseBucket(
-                client.db("DigitalerZwillingHerne"),
+                client.db(config.database),
                 buildings
             );
-            await writeToDatabase(
-                client.db("DigitalerZwillingHerne"),
+            console.log("Writing tileInfo to database");
+            await writeTileInfoToDatabase(
+                client.db(config.database),
                 tileInfo
             );
-            console.log("closing down");
+
+            if(config.insertBuildingsInfo) {
+                console.log("Writing buildingsInfo to database");
+                await writeBuildingsInfoToDatabase(
+                    client.db(config.database),
+                    attributesJson
+                );
+            }
+            console.log("Script done");
         } finally {
-            // Ensures that the client will close when you finish/error
+            // Ensures that the client will close on finish/error
             await client.close();
         }
     }
@@ -136,14 +129,30 @@ function main() {
 
 // Read the configuration details
 function readConfigDetails() {
-    let fileContent = fs.readFileSync(
-        "./updateBuildingsDatabase.config.json",
-        "utf8"
-    );
-    config = JSON.parse(fileContent);
+    let exists = checkFileExistsSync(configPath)
+    if(exists) {
+        let fileContent = fs.readFileSync(
+            configPath,
+            "utf8"
+        );
+        config = JSON.parse(JSON.minify(fileContent));
+        return;
+    }
+    throw new Error("Config file not found.")
 }
 
-function createEntityFortileInfo(parsedFileContent) {
+// https://stackoverflow.com/a/35008327/18450475
+function checkFileExistsSync(filepath){
+    let flag = true;
+    try{
+      fs.accessSync(filepath, fs.constants.F_OK);
+    }catch(e){
+      flag = false;
+    }
+    return flag;
+}
+
+function createEntityForTileInfo(parsedFileContent) {
     let location = parsedFileContent.Model.Location;
     let orientation = parsedFileContent.Model.Orientation;
     return {
@@ -164,18 +173,84 @@ function createEntityFortileInfo(parsedFileContent) {
     };
 }
 
-function createEntityForBuildings(parsedFileContent, tileKmlUri) {
+
+function createTileInfoFile(folders) {
+    let tileInfo = {
+        tiles: []
+    };
+
+    for (let folder of folders) {
+        let tile = {
+            id: folder.name,
+            extent: {
+                east: parseFloat(folder.NetworkLink.Region.LatLonAltBox.east),
+                west: parseFloat(folder.NetworkLink.Region.LatLonAltBox.west),
+                north: parseFloat(folder.NetworkLink.Region.LatLonAltBox.north),
+                south: parseFloat(folder.NetworkLink.Region.LatLonAltBox.south),
+            },
+            entities: [],
+        };
+        // For each tile, iterate the entities and add them, too.
+        let tileKmlPath = path.join(
+            "./input",
+            folder.NetworkLink.Link.href
+        );
+        let tileKmlFileContent = fs.readFileSync(tileKmlPath, "utf8");
+        let parsed = txml.simplify(txml.parse(tileKmlFileContent));
+        let entities = parsed.kml.Document.Placemark;
+        // Multiple entities --> Array
+        // One entity --> Object
+        if (entities.length >= 1) {
+            for (let entity of entities) {
+                tile.entities.push(createEntityForTileInfo(entity));
+            }
+        } else {
+            let entity = entities;
+            tile.entities.push(createEntityForTileInfo(entity));
+        }
+        tileInfo.tiles.push(tile);
+    }
+    return tileInfo;
+}
+
+
+function createBuildings(folders) {
+    let buildings = [];
+    for (let folder of folders) {
+        let tileKmlPath = path.join(
+            "./input",
+            folder.NetworkLink.Link.href
+        );
+        let tileKmlFileContent = fs.readFileSync(tileKmlPath, "utf8");
+        let parsed = txml.simplify(txml.parse(tileKmlFileContent));
+        let entities = parsed.kml.Document.Placemark;
+        // Multiple entities --> Array
+        // One entity --> Object
+        if (entities.length >= 1) {
+            for (let entity of entities) {
+                buildings.push(createEntityForBuilding(entity, tileKmlPath));
+            }
+        } else {
+            let entity = entities;
+            buildings.push(createEntityForBuilding(entity, tileKmlPath));
+        }
+    }
+    return buildings;
+}
+
+function createEntityForBuilding(parsedFileContent, tileKmlUri) {
     let location = parsedFileContent.Model.Location;
     let orientation = parsedFileContent.Model.Orientation;
     let tileIndices = extractTileIndices(tileKmlUri);
     let absoluteModelPath = path.join(
-        config.cityDBExportRootFolderPath,
+        "./input",
         "Tiles",
         tileIndices[0].toString(),
         tileIndices[1].toString(),
         parsedFileContent.Model.Link.href
     );
-    // replace .dae with .gltf if needed
+    // TODO .gltb
+    // Replace .dae with .gltf if needed
     if (absoluteModelPath.endsWith(".dae")) {
         absoluteModelPath = absoluteModelPath.replace(
             new RegExp(".dae$"),
@@ -203,6 +278,7 @@ function createEntityForBuildings(parsedFileContent, tileKmlUri) {
     };
 }
 
+
 /**
  * Writes the .gltf files to the database (in a bucket)
  * @param {*} db
@@ -210,13 +286,6 @@ function createEntityForBuildings(parsedFileContent, tileKmlUri) {
  * @returns
  */
 async function writeToDatabaseBucket(db, buildings) {
-
-    // db.collection("buildings.files").drop(function(err, res) {
-    //     if (err) throw err;
-    // });
-    // db.collection("buildings.chunks").drop(function(err, res) {
-    //     if (err) throw err;
-    // });
     // create or get a bucket
     let bucket = new MongoDB.GridFSBucket(db, { bucketName: "buildings" });
     // For now we drop the bucket and recreate it
@@ -241,7 +310,7 @@ async function writeToDatabaseBucket(db, buildings) {
                 .pipe(minifyJsonTransform)
                 .pipe(bucket.openUploadStream(building.pathToModel, {
                     chunkSizeBytes: 1048576,
-                    // store the georeference information in the metadata
+                    // Store the georeference information in the metadata
                     metadata: {
                         id: building.id
                     },
@@ -263,17 +332,24 @@ async function writeToDatabaseBucket(db, buildings) {
     return await Promise.all(promises);
 }
 
-/**
- * Writes the tileInfo json to the database
- * @param {*} db
- * @param {*} data
- */
-async function writeToDatabase(db, data) {
-    let collection = db.collection("buildings.tileInfo");
-    // remove all data first
+
+async function writeTileInfoToDatabase(db, data) {
+    let collection = db.collection(config.collection + ".tileInfo");
+    // Remove all data first
     await collection.deleteMany({});
     await collection.insertOne(data);
 }
+
+async function writeBuildingsInfoToDatabase(db, data) {
+    let collection = db.collection(config.collection + ".buildingsInfo");
+    // Remove all data first
+    await collection.deleteMany({});
+    for(let obj of data) {
+        await collection.insertOne(obj);
+    }
+    
+}
+
 
 function extractTileIndices(path) {
     var regex = /(\\\d+\\\d+\\)(?!.*\1)/i;
@@ -281,3 +357,29 @@ function extractTileIndices(path) {
     let split = substr.split("\\");
     return [parseInt(split[1]), parseInt(split[2])];
 }
+
+
+function convertCsvToJson(csvFilePath) {
+    let json = csvToJson
+        .utf8Encoding()
+        .fieldDelimiter(config.csvFieldDelimiter)
+        .getJsonFromCsv(csvFilePath);
+    // The csv was exported wit surrounding quotes around every prop.
+    // The conversion to json added more quotes, so we have to remove them.
+    let regexStart = /^\"/;
+    let regexEnd = /\"$/
+    for(let obj of json) {
+        for(let key in obj) {
+            let newKey = key.replace(regexStart, "");
+            newKey = newKey.replace(regexEnd, "");
+            delete Object.assign(obj, {[newKey]: obj[key] })[key];
+
+            if(typeof  obj[newKey] === "string") {
+                obj[newKey] = obj[newKey].replace(regexStart, "");
+                obj[newKey] = obj[newKey].replace(regexEnd, "");
+            }
+        }
+    }
+    return json
+}
+

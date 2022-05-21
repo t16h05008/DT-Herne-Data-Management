@@ -3,6 +3,6 @@
     "port": 27017,
     "database": "myDatabase",
     "collection": "sewers",
-    "username": "postgres",
-    "password": "postgres"
+    "username": "",
+    "password": ""
 }

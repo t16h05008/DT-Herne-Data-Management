@@ -17,7 +17,7 @@ from pymongo.errors import (PyMongoError, BulkWriteError)
 
 script_path = os.path.dirname(os.path.realpath(__file__))
 config_path = os.path.join(script_path, "config")
-config_filename = "updateMongoDbSewersDatabase.config.json"
+config_filename = "insertSewerDataIntoDB.config.json"
 input_path = os.path.join(script_path, "output") # take the output of the preparation script as input
 
 def main():
