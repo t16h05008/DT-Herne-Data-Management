@@ -50,12 +50,13 @@ const fs = require("fs");
 const txml = require("txml");
 const path = require("path");
 const { Transform } = require('stream');
-let csvToJson = require('convert-csv-to-json');
+const csvToJson = require('convert-csv-to-json');
 require("jsonminify");
 
 let config;
 const scriptFolderPath = path.dirname(__filename)
 const configPath = path.resolve(scriptFolderPath, "config", "insertBuildingsIntoDB.config.json");
+let buildingIdCounter = 0; // Unique id that should be increased each time it is used (++buildingIdCounter)
 
 main();
 
@@ -87,6 +88,16 @@ function main() {
         csvFileName = csvFileName[0]; // Only allow one CSV file for now
         let csvFilePath = path.join("./input", csvFileName)
         attributesJson = convertCsvToJson(csvFilePath);
+        // Add the numerical building id, so we can directly query attribute sets by id (the gmlId is not queryable by the api)
+        for(let building of buildings) {
+            for(let attrSet of attributesJson) {
+                if(building.gmlId === attrSet.GMLID) {
+                    attrSet["id"] = building.id;
+                    break;
+                }
+            }
+            
+        }
     }
 
     //const uri = "mongodb+srv://"+ username + ":" + password + "@" + clusterUrl  + "/test?retryWrites=true&w=majority";+
@@ -100,23 +111,15 @@ function main() {
             await client.connect();
             // Establish and verify connection
             await client.db("admin").command({ ping: 1 });
+            const db = client.db(config.database)
             console.log("Writing buildings to database");
-            await writeToDatabaseBucket(
-                client.db(config.database),
-                buildings
-            );
+            await writeToDatabaseBucket(db, buildings);
             console.log("Writing tileInfo to database");
-            await writeTileInfoToDatabase(
-                client.db(config.database),
-                tileInfo
-            );
+            await writeTileInfoToDatabase(db, tileInfo);
 
             if(config.insertBuildingsInfo) {
                 console.log("Writing buildingsInfo to database");
-                await writeBuildingsInfoToDatabase(
-                    client.db(config.database),
-                    attributesJson
-                );
+                await writeBuildingsInfoToDatabase(db, attributesJson);
             }
             console.log("Script done");
         } finally {
@@ -259,7 +262,8 @@ function createEntityForBuilding(parsedFileContent, tileKmlUri) {
     }
 
     return {
-        id: parsedFileContent.name,
+        id: ++buildingIdCounter,
+        gmlId: parsedFileContent.name,
         location: {
             lon: parseFloat(location.longitude),
             lat: parseFloat(location.latitude),
@@ -287,17 +291,17 @@ function createEntityForBuilding(parsedFileContent, tileKmlUri) {
  */
 async function writeToDatabaseBucket(db, buildings) {
     // create or get a bucket
-    let bucket = new MongoDB.GridFSBucket(db, { bucketName: "buildings" });
+    let bucket = new MongoDB.GridFSBucket(db, { bucketName: config.collection });
     // For now we drop the bucket and recreate it
     bucket.drop();
-    bucket = new MongoDB.GridFSBucket(db, { bucketName: "buildings" });
+    bucket = new MongoDB.GridFSBucket(db, { bucketName: config.collection });
 
     let promises = [];
     for (let building of buildings) {
         let promise = new Promise((resolve, reject) => {
             // Read the file with fs and pipe the stream into the gridFS writer
             // fs.createReadStream is async, even though it looks like a synchronous function
-            console.log("Writing building with id: ", building.id);
+            console.log("Writing building with gmlId: ", building.gmlId);
 
              const minifyJsonTransform = new Transform({
                 transform(chunk, encoding, callback) {
@@ -310,14 +314,13 @@ async function writeToDatabaseBucket(db, buildings) {
                 .pipe(minifyJsonTransform)
                 .pipe(bucket.openUploadStream(building.pathToModel, {
                     chunkSizeBytes: 1048576,
-                    // Store the georeference information in the metadata
                     metadata: {
-                        id: building.id
+                        id: building.id, // ascending numerical id
+                        gmlId: building.gmlId
                     },
                 })
                 .on("error", () => {
-                    console.error("Something went wrong while writing building with id: ", building.id);
-
+                    console.error("Something went wrong while writing building with gmlId: ", building.gmlId);
                     reject();
                 })
                 .on("finish", () => {
@@ -382,4 +385,3 @@ function convertCsvToJson(csvFilePath) {
     }
     return json
 }
-
