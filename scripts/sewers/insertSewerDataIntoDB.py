@@ -35,14 +35,14 @@ def main():
         collection_suffix = ""
         is_bbox_file = False
         if "point.geojson" in filename:
-            collection_suffix = "shafts"
+            collection_suffix = "shafts.points"
         elif "point.bboxInfo.json" in filename:
-            collection_suffix = "shafts.bboxInfo"
+            collection_suffix = "shafts.points.bboxInfo"
             is_bbox_file = True
         elif "point_as_lines.geojson" in filename:
-            collection_suffix = "shaftsAsLines"
+            collection_suffix = "shafts.lines"
         elif "point_as_lines.bboxInfo.json" in filename:
-            collection_suffix = "shaftsAsLines.bboxInfo"
+            collection_suffix = "shafts.lines.bboxInfo"
             is_bbox_file = True
         elif "line.geojson" in filename:
             collection_suffix = "pipes"
