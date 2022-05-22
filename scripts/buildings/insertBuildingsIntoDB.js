@@ -341,7 +341,7 @@ async function writeTileInfoToDatabase(db, data) {
 }
 
 async function writeBuildingsInfoToDatabase(db, data) {
-    let collection = db.collection(config.collection + ".buildingsInfo");
+    let collection = db.collection(config.collection + ".attributes");
     // Remove all data first
     await collection.deleteMany({});
     for(let obj of data) {
