@@ -1,5 +1,4 @@
 {
-    "cityDBExportMainKmlName": "main.kml", // The name of the root kml file in the folder structure
     "insertBuildingsInfo": false, // If true the script will look for a csv file in the input folder, convert it to json and insert it in it's own collection.
     "csvFieldDelimiter": ";",
     "server": "localhost",

@@ -1,0 +1,7 @@
+{
+    "cityDBExportMainKmlName": "myExport.kml",
+    "insertBuildingsInfo": true,
+    "cityDBExportAttributesName": "attributes.csv",
+    "csvFieldDelimiter": ";",
+    "colladaToGltfConverterPath": "../../Tools/COLLADA2GLTF-v2.1.5-windows-Release-x64/COLLADA2GLTF-bin.exe" // for windows 64bit
+}
