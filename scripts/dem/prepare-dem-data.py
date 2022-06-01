@@ -44,111 +44,122 @@ epsg25832 = srs.ExportToWkt()
 # Disk space usage could be optimized by deleting temporary folders earlier...
 
 def main():
-    # get path for each file that should be processed
-    files_to_process = glob.glob(os.path.join(input_path, '*.xyz.gz'))
-    # iterate files
-    number_of_tiles = len(files_to_process)
+    try:
+        # get path for each file that should be processed
+        files_to_process = glob.glob(os.path.join(input_path, '*.xyz.gz'))
+        # iterate files
+        number_of_tiles = len(files_to_process)
 
-    for idx, data_path in enumerate(files_to_process):
-        print("Processing file " + str(idx+1) + " of " + str(number_of_tiles+1)) 
-        filename = data_path.split("\\")[-1]
-        path = data_path # full path
-        old_path = data_path # stores the reference to the old file path when gdal creates new files
-        # Unzip in processing folder
-        if(config.unzip):
-            filename = replace_last(filename, ".gz", "")
-            path = os.path.abspath(os.path.join(path, "../../processing/0_xyz", filename))
+        if not os.path.exists(processing_path):
+                    print("Creating subdir ./processing")
+                    os.mkdir(processing_path)
+        if not os.path.exists(output_path):
+                    print("Creating subdir ./output")
+                    os.mkdir(output_path)
 
-            if not os.path.exists(os.path.join(processing_path, "0_xyz")):
-                print("Creating subdir ./processing/0_xyz")
-                os.mkdir(os.path.join(processing_path, "0_xyz"))
+        for idx, data_path in enumerate(files_to_process):
+            print("Processing file " + str(idx+1) + " of " + str(number_of_tiles+1)) 
+            filename = data_path.split("\\")[-1]
+            path = data_path # full path
+            old_path = data_path # stores the reference to the old file path when gdal creates new files
+            # Unzip in processing folder
+            if(config.unzip):
+                filename = replace_last(filename, ".gz", "")
+                path = os.path.abspath(os.path.join(path, "../../processing/0_xyz", filename))
 
-            print("Unzipping files to ./processing/0_xyz")
-            unzip(data_path, path)
-        else:
-            # Set the paths in case this step is skipped
-            filename = replace_last(filename, ".gz", "")
-            path = os.path.join(processing_path, "0_xyz", filename)
+                if not os.path.exists(os.path.join(processing_path, "0_xyz")):
+                    print("Creating subdir ./processing/0_xyz")
+                    os.mkdir(os.path.join(processing_path, "0_xyz"))
 
-        if(config.convertToTiff):
-            if not os.path.exists(os.path.join(processing_path, "1_tiff")):
-                print("Creating subdir ./processing/1_tiff")
-                os.mkdir(os.path.join(processing_path, "1_tiff"))
+                print("Unzipping files to ./processing/0_xyz")
+                unzip(data_path, path)
+            else:
+                # Set the paths in case this step is skipped
+                filename = replace_last(filename, ".gz", "")
+                path = os.path.join(processing_path, "0_xyz", filename)
 
+            if(config.convertToTiff):
+                if not os.path.exists(os.path.join(processing_path, "1_tiff")):
+                    print("Creating subdir ./processing/1_tiff")
+                    os.mkdir(os.path.join(processing_path, "1_tiff"))
+
+                old_path = path
+                filename = replace_last(filename, "xyz", "tiff")
+                path = os.path.join(processing_path, "1_tiff", filename)
+
+                print("Converting file to .tiff")
+                xyzToTiff(old_path, path)
+                # apply geoid undulation
+                if not os.path.exists(os.path.join(processing_path, "1_tiff_offset")):
+                    print("Creating subdir ./processing/1_tiff_offset")
+                    os.mkdir(os.path.join(processing_path, "1_tiff_offset"))
+
+                old_path = path
+                path = os.path.join(processing_path, "1_tiff_offset", filename)
+                command = r'"C:\Program Files\QGIS 3.16.16\OSGeo4W.bat" '
+                command += "gdal_calc.py -A \"" + old_path + "\" --outfile=\"" + path + "\" --calc=A+" + str(geoid_undulation)
+                print(command)
+                subprocess.run(command, shell=True)
+                print("Converting done")
+            else:
+                # Set the paths in case this step is skipped
+                filename = replace_last(filename, ".xyz", ".tiff")
+                path = os.path.join(processing_path, "1_tiff", filename)
+
+
+            print("Reprojecting to WGS84")
+            if not os.path.exists(os.path.join(processing_path, "2_WGS84")):
+                    print("Creating subdir ./processing/2_WGS84")
+                    os.mkdir(os.path.join(processing_path, "2_WGS84"))
             old_path = path
-            filename = replace_last(filename, "xyz", "tiff")
-            path = os.path.join(processing_path, "1_tiff", filename)
+            path = os.path.join(processing_path, "2_WGS84", filename)
+            print(old_path)
+            print(path)
+            reprojectToWGS84(old_path, path)
+            print("Reprojection done")
 
-            print("Converting file to .tiff")
-            xyzToTiff(old_path, path)
-            # apply geoid undulation
-            if not os.path.exists(os.path.join(processing_path, "1_tiff_offset")):
-                print("Creating subdir ./processing/1_tiff_offset")
-                os.mkdir(os.path.join(processing_path, "1_tiff_offset"))
-
+            print("Replacing zero values with noData")
+            if not os.path.exists(os.path.join(processing_path, "3_noData")):
+                    print("Creating subdir ./processing/3_noData")
+                    os.mkdir(os.path.join(processing_path, "3_noData"))
             old_path = path
-            path = os.path.join(processing_path, "1_tiff_offset", filename)
-            command = r'"C:\Program Files\QGIS 3.16.16\OSGeo4W.bat" '
-            command += "gdal_calc.py -A \"" + old_path + "\" --outfile=\"" + path + "\" --calc=A+" + str(geoid_undulation)
-            print(command)
-            subprocess.run(command, shell=True)
-            print("Converting done")
-        else:
-            # Set the paths in case this step is skipped
-            filename = replace_last(filename, ".xyz", ".tiff")
-            path = os.path.join(processing_path, "1_tiff", filename)
+            path = os.path.join(processing_path, "3_noData", filename)
+
+            zeroToNoData(old_path, path)
+            print("Replacing done")
+
+            print("Resampling file")
+            if not os.path.exists(os.path.join(processing_path, "4_resampled")):
+                    print("Creating subdir ./processing/4_resampled")
+                    os.mkdir(os.path.join(processing_path, "4_resampled"))
+            resample(path, filename, config.demResolutions)
+            print("Resampling done")
+
+            filename_old = filename
+            # Copy files to result folder
+            # they are placed in ./processing/resampled/dem<resolution>/
+            for resolution in config.demResolutions:
+                # Update variabled to match the changes done in resample
+                filename = replace_last(filename_old, "dgm1", "dgm" + str(resolution))
+                old_path = os.path.join(processing_path, "4_resampled", "dem" + str(resolution), filename)
+                path = os.path.join(output_path, "dem" + str(resolution), filename) 
+
+                if not os.path.exists( os.path.join(output_path, "dem" + str(resolution)) ):
+                    print("Creating output subdir ./output/" + "dem" + str(resolution))
+                    os.mkdir( os.path.join(output_path, "dem" + str(resolution)) )
+
+                print("Copy resampled file to output directory")
+                shutil.copy(old_path, path)
+
+            print("File processed")
+            print("--------------------------------------------")
+        print("Script done.")
+    except Exception as e:
+        raise Exception(e)
+    finally:
+        print("Cleaning processing directory")
+        shutil.rmtree(processing_path) # Could be done earlier if memory usage is an issue
         
-        
-        print("Reprojecting to WGS84")
-        if not os.path.exists(os.path.join(processing_path, "2_WGS84")):
-                print("Creating subdir ./processing/2_WGS84")
-                os.mkdir(os.path.join(processing_path, "2_WGS84"))
-        old_path = path
-        path = os.path.join(processing_path, "2_WGS84", filename)
-        print(old_path)
-        print(path)
-        reprojectToWGS84(old_path, path)
-        print("Reprojection done")
-
-        print("Replacing zero values with noData")
-        if not os.path.exists(os.path.join(processing_path, "3_noData")):
-                print("Creating subdir ./processing/3_noData")
-                os.mkdir(os.path.join(processing_path, "3_noData"))
-        old_path = path
-        path = os.path.join(processing_path, "3_noData", filename)
-
-        zeroToNoData(old_path, path)
-        print("Replacing done")
-
-        print("Resampling file")
-        if not os.path.exists(os.path.join(processing_path, "4_resampled")):
-                print("Creating subdir ./processing/4_resampled")
-                os.mkdir(os.path.join(processing_path, "4_resampled"))
-        resample(path, filename, config.demResolutions)
-        print("Resampling done")
-        
-        # Copy files to result folder
-        # they are placed in ./processing/resampled/dem<resolution>/
-        for resolution in config.demResolutions:
-            # Update variabled to match the changes done in resample
-            filename = replace_last(filename, "dgm1", "dgm" + str(resolution))
-            old_path = os.path.join(processing_path, "4_resampled", "dem" + str(resolution), filename)
-            path = os.path.join(output_path, "dem" + str(resolution), filename) 
-
-            if not os.path.exists( os.path.join(output_path, "dem" + str(resolution)) ):
-                print("Creating output subdir ./output/" + "dem" + str(resolution))
-                os.mkdir( os.path.join(output_path, "dem" + str(resolution)) )
-
-            print("Copy resampled file to output directory")
-            shutil.copy(old_path, path)
-
-        print("File processed")
-        print("--------------------------------------------")
-        
-    # Delete contents of processing folder
-    print("Cleaning up...")
-    shutil.rmtree(processing_path)
-    print("Script done.")
 
 
 
@@ -185,12 +196,13 @@ def resample(path, filename, resolutions):
     pixel_size = gt[1]
 
     old_path = path
+    filename_old = filename
     for resolution in resolutions:
         print(str(resolution) + "...")
         new_pixel_size = pixel_size * resolution
         
         # Files are placed in different folders anyway, but change the filename for consistency
-        filename = replace_last(filename, "dgm1", "dgm" + str(resolution))
+        filename = replace_last(filename_old, "dgm1", "dgm" + str(resolution))
         path = os.path.join(processing_path, "4_resampled", "dem" + str(resolution), filename)
 
         if not os.path.exists(os.path.join(processing_path, "4_resampled", "dem" + str(resolution))):
