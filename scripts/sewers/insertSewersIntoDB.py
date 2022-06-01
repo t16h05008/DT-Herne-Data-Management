@@ -2,22 +2,20 @@
 # -*- coding: utf-8 -*-
 # Bulk import GeoJSON file into MongoDB
 
-# This script uses the filename of the input files (in subfolder ./output) to determine which collection to insert them in.
-# The filenames should include "point", "line" or "polygon". For each geometry type a separate collection is created / updated.
-# The naming scheme is [config.collection].points (or .line / .polygon), eg. sewerData.point, sewerData.line and sewerData.polygon
+# This script inserts the files in ./output into the database. For each geometry type a separate collection is created / updated.
+# The naming scheme is [config.collection].points (or .line), eg. sewerData.point, sewerData.line.
 # Also, collections are dropped and recreated for now, so only use this script to import a complete dataset
 
 import os
 import json
 import glob
 from pathlib import Path
-from datetime import datetime
 from pymongo import MongoClient, GEOSPHERE, InsertOne
 from pymongo.errors import (PyMongoError, BulkWriteError)
 
 script_path = os.path.dirname(os.path.realpath(__file__))
 config_path = os.path.join(script_path, "config")
-config_filename = "insertSewerDataIntoDB.config.json"
+config_filename = "insertSewersIntoDB.config.json"
 input_path = os.path.join(script_path, "output") # take the output of the preparation script as input
 
 def main():
@@ -34,37 +32,18 @@ def main():
         filename = file_path.split("\\")[-1]
         collection_suffix = ""
         is_bbox_file = False
-        if "point.geojson" in filename:
-            collection_suffix = "shafts.points"
-        elif "point.bboxInfo.json" in filename:
-            collection_suffix = "shafts.points.bboxInfo"
-            is_bbox_file = True
-        elif "point_as_lines.geojson" in filename:
-            collection_suffix = "shafts.lines"
-        elif "point_as_lines.bboxInfo.json" in filename:
-            collection_suffix = "shafts.lines.bboxInfo"
-            is_bbox_file = True
-        elif "line.geojson" in filename:
+        if filename == "shafts.geojson" :
+            collection_suffix = "shafts"
+        elif filename == "pipes.geojson":
             collection_suffix = "pipes"
-        elif "line.bboxInfo.json" in filename:
+        elif filename == "pipes.bboxInfo.json":
             collection_suffix = "pipes.bboxInfo"
             is_bbox_file = True
-        # Store the bbox, too, but it's likely never queried...
-        elif "polygon.geojson" in filename:
-            collection_suffix = "polygon"
-        elif "polygon.bboxInfo.json" in filename:
-            collection_suffix = "polygon.bboxInfo"
-            is_bbox_file = True
         else:
-            raise Exception("Filename must contain \
-                'point.geojson', \
-                'point.bboxInfo.json', \
-                'point_as_lines.geojson', \
-                'point_as_lines.bboxInfo.json', \
-                'line.geojson' \
-                'line.bboxInfo.json', \
-                'polygon.geojson' or \
-                'polygon.bboxInfo.json' (to determine the collection to insert into)")
+            raise Exception("Filename must be \
+                'shafts.geojson', \
+                'pipes.geojson', or \
+                'pipes.bboxInfo.json' (to determine the collection to insert into)")
 
         collection_name = config["collection"] + "." + collection_suffix
         # drop collection id it existed
