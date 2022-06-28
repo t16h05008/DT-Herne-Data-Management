@@ -4,3 +4,6 @@
 /Scripts/*/processing/*
 /Scripts/*/output/*
 /Tools/*
+/Scripts/buildings/config/insertBuildingsIntoDB.config.json
+/Scripts/buildings/config/prepareBuildings.config.json
+/Scripts/sewers/config/insertSewersIntoDB.config.json
