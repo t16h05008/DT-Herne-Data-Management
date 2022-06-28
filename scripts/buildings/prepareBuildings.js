@@ -92,6 +92,13 @@ function main() {
     const pathToColladaGltfConverter = path.resolve(config.colladaToGltfConverterPath);
     
     try {
+        // Clean output directory
+        console.log("Cleaning output directory");
+        let filenames = fse.readdirSync("./output");
+        for (const name of filenames) {
+            let absPath = path.join(scriptFolderPath, "output", name);
+           fse.removeSync(absPath);
+        }
         copyToOutputDir(path.join("./input", "cityDbExport"));
         tilesBboxObj = storeTileBboxesInMemory(tilesBboxObj);
         integrateKmlFilesIntoCityDbStructure(pathToColladaGltfConverter);
@@ -151,7 +158,8 @@ function main() {
         fse.readdir("./output", (err, files) => {
             if (err) throw err;
             for (const file of files) {
-                fse.removeSync(file)
+                let absPath = path.join(scriptFolderPath, "output", file);
+                fse.removeSync(absPath)
             }
         });
         throw(e)
