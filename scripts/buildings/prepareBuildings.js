@@ -21,8 +21,8 @@
  *
  * The 3D-Models are stored using GridFS. The georeference and tile information is stored in the metadata field of each building.
  * Additionally, a separate document is created, which contains the tiling information (for quick access in the client).
- * This document can be queried by clients to determine, which models need to be queries in subsequent requests.
- * it structured like this (example variable is never used in this script):
+ * This document can be queried by clients to determine, which models need to be queried in subsequent requests.
+ * It structured like this (example variable is never used in this script):
  */
  const example = [
     // This object represents a tile
@@ -35,6 +35,7 @@
             south: "51.537007721392065",
             west: "7.223917734104503",
         },
+        indices: [15, 28], // The column and row of the tile in the grid
         // The entities (buildings) contained in this tile
         entities: [
             {
@@ -48,6 +49,7 @@
                 orientation: {
                     heading: 358.6091396,
                 },
+                pathToFile: "output\\Tiles\\16\\28\\19867\\_Bahnhofstrasse12_BD.WW78THZwqrqu8kAn9lY6.gltf"
             },
             {
                 // Maybe more entities
@@ -70,9 +72,7 @@ const { execSync } = require('child_process');
 
 let config;
 const scriptFolderPath = path.dirname(__filename)
-console.log(__filename);
 const configPath = path.resolve(scriptFolderPath, "config", "prepareBuildings.config.json");
-let buildingIdCounter = 0; // Unique id that should be increased each time it is used (++buildingIdCounter)
 // Stores the bboxes of all tiles in memory on first tile iteration to reduce io operations. 
 let tilesBboxObj = {
     // 0: {
@@ -90,7 +90,6 @@ function main() {
     console.log("Reading configuration");
     config = Util.readConfigDetails(configPath);
     const pathToColladaGltfConverter = path.resolve(config.colladaToGltfConverterPath);
-    
     try {
         // Clean output directory
         console.log("Cleaning output directory");
@@ -99,6 +98,7 @@ function main() {
             let absPath = path.join(scriptFolderPath, "output", name);
            fse.removeSync(absPath);
         }
+        console.log("Merging folder structures");
         copyToOutputDir(path.join("./input", "cityDbExport"));
         tilesBboxObj = storeTileBboxesInMemory(tilesBboxObj);
         integrateKmlFilesIntoCityDbStructure(pathToColladaGltfConverter);
@@ -111,26 +111,15 @@ function main() {
 
         console.log("Creating tileInfo file");
         let tileInfo = createTileInfoFile(folders);
-        buildingIdCounter = 0; // Reset the counter because we iterated all buildings once and have to do it again.
-        let buildings = createBuildings(folders);
 
         let attributesJson;
         if(config.cityDbExportAttributesExported) {
-            attributesJson = prepareCityDbAttributes(buildings)
+            attributesJson = prepareCityDbAttributes(tileInfo)
         }
 
         // All changes are made at this point (in memory).
         // Write stuff to output folder
         console.log("Writing output files");
-        console.log("Writing buildings file (json)");
-        let exportPath = path.join("./output", "buildings.json");
-        try {
-            fse.writeFileSync(exportPath, JSON.stringify(buildings));
-        } catch (err) {
-            console.error(err);
-            throw err;
-        }
-
         console.log("Writing tileInfo file (json)");
         exportPath = path.join("./output", "tileInfo.json");
         try {
@@ -150,7 +139,6 @@ function main() {
                 throw err;
             }
         }
-
         console.log("Script done.");
     } catch (e) {
         console.log("Something went wrong. Cleaning output directory.");
@@ -166,24 +154,15 @@ function main() {
     }
 }
 
-// Read the configuration details
-function readConfigDetails() {
-    let exists = checkFileExistsSync(configPath)
-    if(exists) {
-        let fileContent = fse.readFileSync(configPath,"utf8");
-        return JSON.parse(JSON.minify(fileContent));
-    }
-    throw new Error("Config file not found.")
-}
-
-
 
 function createTileInfoFile(folders) {
     let tileInfo = {
         tiles: []
     };
-
+    let buildingIdCounter = 0;
     for (let folder of folders) {
+        let tileKmlPath = path.join("./output", folder.NetworkLink.Link.href);
+        let tileIndices = extractTileIndices(tileKmlPath);
         let tile = {
             id: folder.name,
             extent: {
@@ -192,13 +171,10 @@ function createTileInfoFile(folders) {
                 north: parseFloat(folder.NetworkLink.Region.LatLonAltBox.north),
                 south: parseFloat(folder.NetworkLink.Region.LatLonAltBox.south),
             },
+            indices: tileIndices,
             entities: [],
         };
         // For each tile, iterate the entities and add them, too.
-        let tileKmlPath = path.join(
-            "./output",
-            folder.NetworkLink.Link.href
-        );
         let tileKmlFileContent = fse.readFileSync(tileKmlPath, "utf8");
         let parsed = txml.simplify(txml.parse(tileKmlFileContent));
         let placemarks = parsed.kml.Document.Placemark;
@@ -207,12 +183,16 @@ function createTileInfoFile(folders) {
             let entities = placemarks.filter( placemark => {
                 return placemark.hasOwnProperty("Model");
             });
-            for (let entity of entities)
-                tile.entities.push(createEntityForTileInfo(entity));
+            for (let entity of entities) {
+                buildingIdCounter++;
+                tile.entities.push(createEntityForTileInfo(entity, buildingIdCounter, tile));
+            }
+                
         } else{
             // If there is only one placemark the prop is an object
             if(placemarks.hasOwnProperty("Model")) {
-                tile.entities.push(createEntityForTileInfo(placemarks));
+                buildingIdCounter++;
+                tile.entities.push(createEntityForTileInfo(placemarks, buildingIdCounter, tile));
             }
         }
         tileInfo.tiles.push(tile);
@@ -221,80 +201,28 @@ function createTileInfoFile(folders) {
 }
 
 
-function createBuildings(folders) {
-    let buildings = [];
-    for (let folder of folders) {
-        let tileKmlPath = path.join(
-            "./output",
-            folder.NetworkLink.Link.href
-        );
-        let tileKmlFileContent = fse.readFileSync(tileKmlPath, "utf8");
-        let parsed = txml.simplify(txml.parse(tileKmlFileContent));
-        let placemarks = parsed.kml.Document.Placemark;
-        if(Array.isArray(placemarks)) {
-            // Placemarks can be entities or tile borders, we need the entities.
-            let entities = placemarks.filter( placemark => {
-                return placemark.hasOwnProperty("Model");
-            });
-            for (let entity of entities)
-            buildings.push(createEntityForBuilding(entity, tileKmlPath));
-        } else{
-            // If there is only one placemark the prop is an object
-            if(placemarks.hasOwnProperty("Model")) {
-                buildings.push(createEntityForBuilding(placemarks, tileKmlPath));
-            }
-        }
-    }
-    return buildings;
-}
-
 /**
  * Creates an entity object to insert in the tileInfo file.
  * @param {object} parsedFileContent | The entity in the tile kml file
  * @returns entity object
  */
-function createEntityForTileInfo(parsedFileContent) {
+function createEntityForTileInfo(parsedFileContent, buildingIdCounter, tile) {
     let location = parsedFileContent.Model.Location;
     let orientation = parsedFileContent.Model.Orientation;
-    return {
-        id: ++buildingIdCounter,
-        gmlId: parsedFileContent.name,
-        location: {
-            lon: parseFloat(location.longitude),
-            lat: parseFloat(location.latitude),
-            height: parseFloat(location.altitude),
-        },
-        orientation: {
-            /* 
-                The file only contains the heading
-                No idea why +90 (degree) is needed here, but it works.
-                Maybe the heading get exported with a different reference to the one used by Cesium from the db?
-            */
-            heading: parseFloat(orientation.heading) + 90,
-        },
-    };
-}
-
-
-function createEntityForBuilding(parsedFileContent, tileKmlUri) {
-    let location = parsedFileContent.Model.Location;
-    let orientation = parsedFileContent.Model.Orientation;
-    let tileIndices = extractTileIndices(tileKmlUri);
-    let absoluteModelPath = path.join(
+    let pathToFile = path.join(
         "./output",
         "Tiles",
-        tileIndices[0].toString(),
-        tileIndices[1].toString(),
+        tile.indices[0].toString(),
+        tile.indices[1].toString(),
         parsedFileContent.Model.Link.href
     );
-    // TODO .gltb
-    // Replace .dae with .gltf if needed
-    if(absoluteModelPath.endsWith(".dae")) {
-        absoluteModelPath = replaceLast(absoluteModelPath, ".dae", ".gltf");
+    
+    if(pathToFile.endsWith(".dae")) {
+        pathToFile = replaceLast(pathToFile, ".dae", ".gltf");
     }
 
     return {
-        id: ++buildingIdCounter,
+        id: buildingIdCounter,
         gmlId: parsedFileContent.name,
         location: {
             lon: parseFloat(location.longitude),
@@ -309,14 +237,13 @@ function createEntityForBuilding(parsedFileContent, tileKmlUri) {
             */
             heading: parseFloat(orientation.heading) + 90,
         },
-        pathToModel: absoluteModelPath,
-        tile: tileIndices,
+        pathToFile: pathToFile
     };
 }
 
+
 // Get tile indices from cityDB folder path
 function extractTileIndices(path) {
-    console.log(path);
     var regex = /(\\\d+\\\d+\\)(?!.*\1)/i;
     let substr = path.match(regex)[1];
     let split = substr.split("\\");
@@ -562,19 +489,21 @@ function integrateKmlFilesIntoCityDbStructure(pathToColladaGltfConverter) {
 }
 
 
-function prepareCityDbAttributes(buildings) {
+function prepareCityDbAttributes(tileInfo) {
     console.log("Preparing cityDB attributes");
     console.log("Converting to JSON");
     let csvFilePath = path.join("./output", config.cityDBExportAttributesName)
     let attributesJson = convertCsvToJson(csvFilePath);
     // For each building, check if we exported any attributes
     console.log("Adding id");
-    for(let building of buildings) {
-        for(let attrSet of attributesJson) {
-            if(building.gmlId === attrSet.GMLID) {
-                // If yes, add the numerical building id as an attribute (so we can query attributes by building is later)
-                attrSet["id"] = building.id;
-                break;
+    for(let tile of tileInfo.tiles) {
+        for(let building of tile.entities) {
+            for(let attrSet of attributesJson) {
+                if(building.gmlId === attrSet.GMLID) {
+                    // If yes, add the numerical building id as an attribute (so we can query attributes by building id later)
+                    attrSet["id"] = building.id;
+                    break;
+                }
             }
         }
     }

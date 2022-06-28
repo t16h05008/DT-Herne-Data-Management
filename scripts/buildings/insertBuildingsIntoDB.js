@@ -19,9 +19,7 @@ function main() {
     config = Util.readConfigDetails(configPath);
 
     console.log("Reading files");
-    let fileContent = fs.readFileSync(path.join("./output", "buildings.json"), { encoding: "utf8"});
-    let buildings = JSON.parse(fileContent)
-    fileContent = fs.readFileSync(path.join("./output", "tileInfo.json"), { encoding: "utf8"});
+    let fileContent = fs.readFileSync(path.join("./output", "tileInfo.json"), { encoding: "utf8"});
     let tileInfo = JSON.parse(fileContent);
     fileContent = fs.readFileSync(path.join("./output", "attributes.json"), { encoding: "utf8"});
     let attributesJson = JSON.parse(fileContent);
@@ -40,7 +38,7 @@ function main() {
             console.log("Connection established");
             const db = client.db(config.database)
             console.log("Writing buildings to database");
-            await writeToDatabaseBucket(db, buildings);
+            await writeToDatabaseBucket(db, tileInfo);
             console.log("Writing tileInfo.json to database");
             await writeTileInfoToDatabase(db, tileInfo);
             if(config.insertBuildingsInfo) {
@@ -60,10 +58,10 @@ function main() {
 /**
  * Writes the .gltf files to the database (in a bucket)
  * @param {*} db
- * @param {*} buildings
+ * @param {*} tileInfo
  * @returns
  */
-async function writeToDatabaseBucket(db, buildings) {
+async function writeToDatabaseBucket(db, tileInfo) {
     // create or get a bucket
     let bucket = new MongoDB.GridFSBucket(db, { bucketName: config.collection });
     // For now we drop the bucket and recreate it
@@ -71,40 +69,42 @@ async function writeToDatabaseBucket(db, buildings) {
     bucket = new MongoDB.GridFSBucket(db, { bucketName: config.collection });
 
     let promises = [];
-    for (let building of buildings) {
-        let promise = new Promise((resolve, reject) => {
-            // Read the file with fs and pipe the stream into the gridFS writer
-            // fs.createReadStream is async, even though it looks like a synchronous function
-            console.log("Writing building with gmlId: ", building.gmlId);
-
-             const minifyJsonTransform = new Transform({
-                transform(chunk, encoding, callback) {
-                    this.push(chunk.toString('utf-8').replace(/[\n\r\s]+/g, ''));
-                    callback();
-                }
+    for(let tile of tileInfo.tiles) {
+        for (let building of tile.entities) {
+            let promise = new Promise((resolve, reject) => {
+                // Read the file with fs and pipe the stream into the gridFS writer
+                // fs.createReadStream is async, even though it looks like a synchronous function
+                console.log("Writing building with gmlId: ", building.gmlId);
+    
+                 const minifyJsonTransform = new Transform({
+                    transform(chunk, encoding, callback) {
+                        this.push(chunk.toString('utf-8').replace(/[\n\r\s]+/g, ''));
+                        callback();
+                    }
+                });
+                fs.createReadStream(building.pathToFile, 'utf-8')
+                    .pipe(minifyJsonTransform)
+                    .pipe(bucket.openUploadStream(building.pathToFile, {
+                        chunkSizeBytes: 1048576,
+                        metadata: {
+                            id: building.id, // ascending numerical id
+                            gmlId: building.gmlId
+                            // No need to write geolocation here, the tileInfo.json file is already present in the client
+                        },
+                    })
+                    .on("error", () => {
+                        console.error("Something went wrong while writing building with gmlId: ", building.gmlId);
+                        reject();
+                    })
+                    .on("finish", () => {
+                        resolve();
+                    })
+                );
             });
-            fs.createReadStream(building.pathToModel, 'utf-8')
-                .pipe(minifyJsonTransform)
-                .pipe(bucket.openUploadStream(building.pathToModel, {
-                    chunkSizeBytes: 1048576,
-                    metadata: {
-                        id: building.id, // ascending numerical id
-                        gmlId: building.gmlId
-                    },
-                })
-                .on("error", () => {
-                    console.error("Something went wrong while writing building with gmlId: ", building.gmlId);
-                    reject();
-                })
-                .on("finish", () => {
-                    resolve();
-                })
-            );
-        });
-
-        promises.push(promise);
+            promises.push(promise);
+        }
     }
-
+    
     return await Promise.all(promises);
 }
 
