@@ -9,10 +9,10 @@ E0101.N01_% : Height of shaft cover
 E0101.N02_% : Shaft bottom height (the deepest point)
 E0102.N01_% : Height, where the pipe connects to the shaft
 E0102.N02_% : Height, where the pipe connects to the shaft (other end)
-E0102.N03_% : ?
-E0102.N06_% : ?
+E0102.N03_% : Length
+E0102.N06_% : Diameter (height) in millimeter
 E0102.C05_% : Material
-E0102.N05_% : Diameter in millimeter
+E0102.N05_% : Diameter (width) in millimeter
 E0102.N08_% : Inclination in parts per thousand
 C37_%S      : Comment in free text
 
@@ -59,13 +59,13 @@ attributeNameMap = {
     "Z": "Z",
     "E0101.N01_%": "Deckelhöhe [m]",
     "E0101.N02_%": "Sohlhöhe [m]",
-    "E0102.N03_%": "2D-Länge [m]",
+    "E0102.N03_%": "Länge Aufmaß [m]",
     "E0102.C05_%": "Materialkürzel",
-    "E0102.N05_%": "Durchmesser [mm]",
+    "E0102.N05_%": "Profilbreite [mm]",
     "E0102.N08_%": "Neigung [‰]",
-    "E0102.N01_%": "Höhe Schachtanschluss 1",
-    "E0102.N02_%": "Höhe Schachtanschluss 2",
-    "E0102.N06_%": "?",
+    "E0102.N01_%": "Ablaufhöhe [m]",
+    "E0102.N02_%": "Anlaufhöhe [m]",
+    "E0102.N06_%": "Profilhöhe [mm]",
     "C37_%S": "Kommentar",
     "Length": "Length",
     "Area": "Area",
@@ -141,20 +141,22 @@ def main():
 
         # Get all points that have a Z value.
         shafts = [feature for feature in point_geojson["features"] if int(feature["properties"]["Z"]) > 0]
-        shafts = [feature for feature in shafts if feature["properties"]["Layer"] != "Abwasser-Haltungen-Insp-Symbole-DWA-SK"] # TODO ask what that layer means, for no we ignore it.
+        shafts = [feature for feature in shafts if feature["properties"]["Layer"] != "Abwasser-Haltungen-Insp-Symbole-DWA-SK"] # TODO ask what that layer means, for now we ignore it.
         # Get all points, where the layer includes "_TXT". These are the text blocks, which contain the information about the shafts / pipes.
         txt_blocks = [feature for feature in point_geojson["features"] if "_TXT" in feature["properties"]["Layer"]]
         # For each point, check if there is a feature (txt_block) with equal coordinates.
         # If yes, that feature belongs to that shaft.
         for idx, shaft in enumerate(shafts):
             props = shaft["properties"]
+            # initial values. gets overwritten if attributes are found
+            props["Color"] = "150,150,150"
             point_x = float(props["X"])
             point_y = float(props["Y"])
             for idx, txt_block in enumerate(txt_blocks):
                 txt_props = txt_block["properties"]
                 txt_x = float(txt_props["X"])
                 txt_y = float(txt_props["Y"])
-                # This works for some point, but not for all. Mostly for shafts
+                # This works for some points, but not for all. Mostly for shafts
                 if(point_x == txt_x and point_y == txt_y):
                     props["Color"] = txt_props["Color"]
                     props["Linetype"] = txt_props["Linetype"]
@@ -168,7 +170,7 @@ def main():
                     props["C37_%S"] = txt_props["C37_%S"]
                     props["Elevation"] = txt_props["Elevation"]
 
-        shafts = [feature for feature in shafts if feature["properties"]["E0101.N01_%"] and feature["properties"]["E0101.N02_%"]]
+        #shafts = [feature for feature in shafts if feature["properties"]["E0101.N01_%"] and feature["properties"]["E0101.N02_%"]]
         point_geojson["features"] = shafts
 
         # Now we have to do the same for the pipes.
@@ -178,6 +180,9 @@ def main():
         buffer_distance = 1 # 2D buffer, 1 meter
         for idx, pipe in enumerate(pipes):
             props = pipe["properties"]
+            # Initial values. Gets overwritten if attributes are found
+            props["Color"] = "150,150,150"
+            props["E0102.N05_%"] = 300
             # buffer line geom and round length to
             length2D = getLinestringLength2D(pipe["geometry"]["coordinates"])
             length2D = round(length2D, 3)
@@ -192,24 +197,23 @@ def main():
                 if txt_length2D is None:
                     continue
                 txt_length2D = round(float(txt_length2D), 2)
-                if txt_length2D and length2D - epsilon <= txt_length2D and txt_length2D <= length2D + epsilon:
-                    if buffer.contains(txt_coord):
-                        props["Color"] = txt_props["Color"]
-                        props["Linetype"] = txt_props["Linetype"]
-                        props["Lineweight"] = txt_props["Lineweight"]
-                        props["Hyperlink"] = txt_props["Hyperlink"]
-                        props["Thickness"] = txt_props["Thickness"]
-                        props["E0102.N01_%"] = float( txt_props["E0102.N01_%"] ) if txt_props["E0102.N01_%"] is not None else txt_props["E0102.N01_%"]
-                        props["E0102.N02_%"] = float( txt_props["E0102.N02_%"] ) if txt_props["E0102.N02_%"] is not None else txt_props["E0102.N02_%"]
-                        props["E0102.N03_%"] = float( txt_props["E0102.N03_%"] ) if txt_props["E0102.N03_%"] is not None else txt_props["E0102.N03_%"]
-                        props["E0102.N05_%"] = float( txt_props["E0102.N05_%"] ) if txt_props["E0102.N05_%"] is not None else txt_props["E0102.N05_%"]
-                        props["E0102.N06_%"] = txt_props["E0102.N06_%"]
-                        props["E0102.N08_%"] = float( txt_props["E0102.N08_%"] ) if txt_props["E0102.N08_%"] is not None else txt_props["E0102.N08_%"]
-                        props["E0101.C01_%"] = txt_props["E0101.C01_%"]
-                        props["E0102.C05_%"] = txt_props["E0102.C05_%"]
-                        props["C37_%S"] = txt_props["C37_%S"]
-                        props["Elevation"] = txt_props["Elevation"]
-                        break
+                if length2D - epsilon <= txt_length2D and txt_length2D <= length2D + epsilon and buffer.contains(txt_coord):
+                    props["Color"] = txt_props["Color"]
+                    props["Linetype"] = txt_props["Linetype"]
+                    props["Lineweight"] = txt_props["Lineweight"]
+                    props["Hyperlink"] = txt_props["Hyperlink"]
+                    props["Thickness"] = txt_props["Thickness"]
+                    props["E0102.N01_%"] = float( txt_props["E0102.N01_%"] ) if txt_props["E0102.N01_%"] is not None else txt_props["E0102.N01_%"]
+                    props["E0102.N02_%"] = float( txt_props["E0102.N02_%"] ) if txt_props["E0102.N02_%"] is not None else txt_props["E0102.N02_%"]
+                    props["E0102.N03_%"] = float( txt_props["E0102.N03_%"] ) if txt_props["E0102.N03_%"] is not None else txt_props["E0102.N03_%"]
+                    props["E0102.N05_%"] = float( txt_props["E0102.N05_%"] ) if txt_props["E0102.N05_%"] is not None else txt_props["E0102.N05_%"]
+                    props["E0102.N06_%"] = txt_props["E0102.N06_%"]
+                    props["E0102.N08_%"] = float( txt_props["E0102.N08_%"] ) if txt_props["E0102.N08_%"] is not None else txt_props["E0102.N08_%"]
+                    props["E0101.C01_%"] = txt_props["E0101.C01_%"]
+                    props["E0102.C05_%"] = txt_props["E0102.C05_%"]
+                    props["C37_%S"] = txt_props["C37_%S"]
+                    props["Elevation"] = txt_props["Elevation"]
+                    break
 
         line_geojson["features"] = pipes
         # Has to be done after calculating length and buffer
