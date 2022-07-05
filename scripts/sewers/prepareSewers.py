@@ -118,11 +118,11 @@ def main():
                 else:
                     raise Exception("Geometry type was neither 'Point' nor 'LineString'.")
 
-        # Remove unneeded features
-        # Some points have the height set to 100, because the real values could not be determined
-        print("Removing points with Z value 100")
-        point_geojson["features"] = [feature for feature in point_geojson["features"] if int(feature["properties"]["Z"]) != 100]
-        point_geojson["features"] = [feature for feature in point_geojson["features"] if feature["properties"]["E0101.N01_%"] != "100.000"] # shaft cover height in _txt layers ( = the text features, that belong to those points)
+        for feature in point_geojson["features"]:
+            if int(feature["properties"]["Z"]) == 100:
+                feature["properties"]["Color"] = "150,150,150"
+            if feature["properties"]["E0101.N01_%"] == "100.000":  # shaft cover height in _txt layers ( = the text features, that belong to those points)
+                feature["properties"]["Color"] = "150,150,150"
 
         # Add an unique id. There are some fields we could use, but we add a new one to be safe
         counter = 1
@@ -150,14 +150,14 @@ def main():
             props = shaft["properties"]
             # initial values. gets overwritten if attributes are found
             props["Color"] = "150,150,150"
-            point_x = float(props["X"])
-            point_y = float(props["Y"])
+
+            p1 = Point(shaft["geometry"]["coordinates"])
             for idx, txt_block in enumerate(txt_blocks):
                 txt_props = txt_block["properties"]
                 txt_x = float(txt_props["X"])
                 txt_y = float(txt_props["Y"])
-                # This works for some points, but not for all. Mostly for shafts
-                if(point_x == txt_x and point_y == txt_y):
+                p2 = Point(txt_x, txt_y)
+                if(p1.almost_equals(p2, 2)): # 1mm
                     props["Color"] = txt_props["Color"]
                     props["Linetype"] = txt_props["Linetype"]
                     props["Lineweight"] = txt_props["Lineweight"]
@@ -169,6 +169,7 @@ def main():
                     props["E0102.C05_%"] = txt_props["E0102.C05_%"]
                     props["C37_%S"] = txt_props["C37_%S"]
                     props["Elevation"] = txt_props["Elevation"]
+                    break
 
         #shafts = [feature for feature in shafts if feature["properties"]["E0101.N01_%"] and feature["properties"]["E0101.N02_%"]]
         point_geojson["features"] = shafts
@@ -176,28 +177,21 @@ def main():
         # Now we have to do the same for the pipes.
         # The geometries are in one file, the information (as point objects) in the other
         pipes = line_geojson["features"]
-        epsilon = 0.1 # length plus minus interval
-        buffer_distance = 1 # 2D buffer, 1 meter
+        epsilon = 0.01
         for idx, pipe in enumerate(pipes):
             props = pipe["properties"]
             # Initial values. Gets overwritten if attributes are found
             props["Color"] = "150,150,150"
             props["E0102.N05_%"] = 300
-            # buffer line geom and round length to
-            length2D = getLinestringLength2D(pipe["geometry"]["coordinates"])
-            length2D = round(length2D, 3)
-            buffer = LineString(pipe["geometry"]["coordinates"]).buffer(buffer_distance, cap_style=CAP_STYLE.round, join_style=JOIN_STYLE.round) 
-            
+
+            ls = LineString(pipe["geometry"]["coordinates"])
+            midpoint = ls.interpolate(0.5, normalized=True)
             for idx, txt_block in enumerate(txt_blocks):
                 txt_props = txt_block["properties"]
                 x = txt_props["X"]
                 y = txt_props["Y"]
                 txt_coord = Point(float(x), float(y))
-                txt_length2D = txt_props["E0102.N03_%"]
-                if txt_length2D is None:
-                    continue
-                txt_length2D = round(float(txt_length2D), 2)
-                if length2D - epsilon <= txt_length2D and txt_length2D <= length2D + epsilon and buffer.contains(txt_coord):
+                if txt_coord.distance(midpoint) < epsilon:
                     props["Color"] = txt_props["Color"]
                     props["Linetype"] = txt_props["Linetype"]
                     props["Lineweight"] = txt_props["Lineweight"]
@@ -214,7 +208,7 @@ def main():
                     props["C37_%S"] = txt_props["C37_%S"]
                     props["Elevation"] = txt_props["Elevation"]
                     break
-
+                
         line_geojson["features"] = pipes
         # Has to be done after calculating length and buffer
         print("Reprojecting to EPSG:4326")
