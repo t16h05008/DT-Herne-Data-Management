@@ -3,6 +3,7 @@
 /Scripts/*/input/*
 /Scripts/*/processing/*
 /Scripts/*/output/*
+/Scripts/*/stuff
 /Tools/*
 /Scripts/buildings/config/insertBuildingsIntoDB.config.json
 /Scripts/buildings/config/prepareBuildings.config.json
