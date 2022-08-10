@@ -1,0 +1,1 @@
+gocesiumtiler -input ./output/U_Bahn_Kreuzkirche.las -output ./output -zoffset 45.43 -grid-max-size 20 -grid-min-size 0.30

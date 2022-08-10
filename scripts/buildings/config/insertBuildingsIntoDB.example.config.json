@@ -1,0 +1,10 @@
+{
+    "insertBuildingsInfo": false, // If true the script will look for a csv file in the input folder, convert it to json and insert it in it's own collection.
+    "csvFieldDelimiter": ";",
+    "server": "localhost",
+    "port": 27017,
+    "database": "myDatabase",
+    "collection": "buildings",
+    "username": "",
+    "password": ""
+}
